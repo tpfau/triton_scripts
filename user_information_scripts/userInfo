@@ -1,0 +1,5 @@
+#!/bin/bash
+# Get information about a user from the LDAP server
+function ldapemail () ( set -x ; for name in "$@" ; do net ads search "(|(samAccountName=$name*)(givenName=$name*)(sn=$name*)(mail=$name*))" displayName givenName sn department title mail roomNumber physicalDeliveryOfficeName streetAddress samAccountName departmentNumber extensionAttribute14 ; done ; ) 
+
+ldapemail $1

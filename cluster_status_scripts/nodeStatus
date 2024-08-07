@@ -1,0 +1,8 @@
+#!/bin/bash
+if [ "$#" -ne 0 ]
+then
+sinfo --Node -n $1 --Format="NodeHost:10,StateCompact:10,FreeMem:10,Memory:10,AllocMem:10,CPUs:10,CPUsState:15,CPUsLoad:10,Gres:40,GresUsed:40"
+else
+sinfo --Node --Format="NodeHost:10,StateCompact:10,FreeMem:10,Memory:10,AllocMem:10,CPUs:10,CPUsState:15,CPUsLoad:10,Gres:40,GresUsed:40"
+fi
+

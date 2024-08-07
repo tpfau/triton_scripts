@@ -1,0 +1,8 @@
+#!/bin/bash
+# Get some information about a specific job from it's ID, mainly allocated and used resources
+echo Requested
+sacct -j $1 --format JobID,Elapsed,AllocTRES%60,ReqTRES%40,Start,End
+echo Usage
+sacct -j $1 --format JobID,MaxRSS,TRESUsageInAve%150
+
+

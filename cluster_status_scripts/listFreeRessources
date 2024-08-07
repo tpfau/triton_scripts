@@ -1,0 +1,168 @@
+#!/bin/python3
+# List the currently free resources on triton.
+# NOTE: This doesn't give any information about the scheduling status of the nodes.
+
+import subprocess
+import re
+import sys
+
+
+gpuUsage = re.compile("(\w+) *.*?gpu:(\w+):(\d+).*?gpu:(\w+):(\d+).*")
+nodeState = re.compile("(\w+) *(\w+).? +.+")
+CPUState = re.compile(
+    "(?P<nodeID>\w+) .*\d+/(?P<idleCPUs>\d+)/\d+/(?P<totalCPUs>\d+) .+"
+)
+MemFree = re.compile(
+    "(?P<nodeID>\w+) +.*? +.*? +(?P<totalMem>\d+) +(?P<allocMem>\d+) .+"
+)
+
+nodeStatus = {}
+unusableNodes = []
+outputFilter = None
+if len(sys.argv) > 1:
+    outputFilter = sys.argv[1]
+gpuOnly = False
+if not outputFilter == None and outputFilter.lower() == "gpu":
+    gpuOnly = True
+    outputFilter = None
+
+
+def updateNodeStatus(nodeName, resource, free, total, type=None):
+    if not nodeName in nodeStatus:
+        nodeStatus[nodeName] = {}
+    if not resource in nodeStatus[nodeName]:
+        nodeStatus[nodeName][resource] = {}
+    if not type == None:
+        # The script assumes, that there will never be multiple GPU types on one node.
+        nodeStatus[nodeName][resource] = (type, str(free), str(total))
+    else:
+        nodeStatus[nodeName][resource] = (str(free), str(total))
+
+
+def getGPUUsage(nodeInfo):
+    nodeInfo = gpuUsage.match(nodeInfo)
+    if nodeInfo == None:
+        return
+    else:
+        nodeInfo = nodeInfo.groups()
+    gpuInfo = {nodeInfo[0]: getFreeGPUsOnNode(nodeInfo[1:])}.items()
+    available = dict(filter(lambda elem: elem[1] != None, gpuInfo))
+    if len(available) == 0:
+        return
+    else:
+        for node in available:
+            for key in available[node]:
+                updateNodeStatus(
+                    node, "gpu", available[node][key][0], available[node][key][1], key
+                )
+
+
+def getFreeGPUsOnNode(resources):
+    resourceDic = {}
+    for i in range(0, len(resources), 2):
+        if resources[i] in resourceDic:
+            if resourceDic[resources[i]] == int(resources[i + 1]):
+                del resourceDic[resources[i]]
+            else:
+                resourceDic[resources[i]] = (
+                    resourceDic[resources[i]] - int(resources[i + 1]),
+                    resourceDic[resources[i]],
+                )
+        else:
+            resourceDic[resources[i]] = int(resources[i + 1])
+    if len(resourceDic) == 0:
+        return None
+    else:
+        return resourceDic
+
+
+def getNodeStatus(nodeInfo):
+    nodeState = CPUState.match(nodeInfo)
+    memInfo = MemFree.match(nodeInfo)
+    nodeUsable = True
+    if not nodeState == None and int(nodeState.group("idleCPUs")) > 0:
+        updateNodeStatus(
+            nodeState.group("nodeID"),
+            "cpu",
+            nodeState.group("idleCPUs"),
+            nodeState.group("totalCPUs"),
+        )
+    if not nodeState == None and int(nodeState.group("idleCPUs")) == 0:
+        nodeUsable = False
+    if not memInfo == None:
+        totalMem = int(memInfo.group("totalMem"))
+        allocMem = int(memInfo.group("allocMem"))
+        if totalMem - allocMem == 0:
+            nodeUsable = False
+        else:
+            updateNodeStatus(
+                nodeState.group("nodeID"),
+                "memory",
+                totalMem - allocMem,
+                int(memInfo.group("totalMem")),
+            )
+    if not nodeUsable:
+        del nodeStatus[nodeState.group("nodeID")]
+
+
+def prepareNodeStatus(res):
+    for node in res:
+        getGPUUsage(node)
+        getNodeStatus(node)
+
+
+def printNodeStatus():
+    print(
+        "{node:10s}|{cpu:17s}|{mem:21s}|{gpu:24s}".format(
+            node="NodeName",
+            cpu="Available CPUs",
+            mem="Available Memory",
+            gpu=" Available GPUs",
+        )
+    )
+    print(
+        "{node:10s}|{freecpu:8s}/{totalcpu:8s}|{freemem:10s}/{totalmem:10s}|{gputype:10s}:{freegpu:6s}/{totalgpu:6s}".format(
+            node="",
+            totalcpu="total",
+            freecpu="free",
+            totalmem="total",
+            freemem="free",
+            gputype="Type",
+            totalgpu="total",
+            freegpu="free",
+        )
+    )
+    nodes = list(nodeStatus.keys())
+    nodes.sort()
+    for node in nodes:
+        if not outputFilter == None:
+            if not filter in node:
+                continue
+        cpuStatus = nodeStatus[node]["cpu"]
+        memStatus = nodeStatus[node]["memory"]
+        gpuString = "{gpu:22s}".format(gpu="")
+        if "gpu" in nodeStatus[node]:
+            gpuStatus = nodeStatus[node]["gpu"]
+            gpuString = "{gputype:10s}:{freegpu:6s}/{totalgpu:6s}".format(
+                gputype=gpuStatus[0], totalgpu=gpuStatus[2], freegpu=gpuStatus[1]
+            )
+        else:
+            gpuStatus = nodeStatus[node]["gpu"] = ("", "", "")
+            if gpuOnly:
+                continue
+        print(
+            "{node:10s}|{freecpu:8s}/{totalcpu:8s}|{freemem:10s}/{totalmem:10s}|{gpuString:22s}".format(
+                node=node,
+                totalcpu=cpuStatus[1],
+                freecpu=cpuStatus[0],
+                totalmem=memStatus[1],
+                freemem=memStatus[0],
+                gpuString=gpuString,
+            )
+        )
+
+
+p = subprocess.Popen("nodeStatus", stdout=subprocess.PIPE, shell=True)
+res = p.communicate()[0].decode("utf-8").split("\n")
+prepareNodeStatus(res)
+printNodeStatus()
